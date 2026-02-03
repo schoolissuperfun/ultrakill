@@ -14,6 +14,7 @@
             overflow: hidden;
             height: 100%;
             width: 100%;
+            background-color: black;
         }
 
         #unity-container {
@@ -26,14 +27,16 @@
     </style>
 </head>
 
-<body style="text-align: center; padding: 0; border: 0; margin: 0;">
-    <div id='loading-text' style="color: black; font-family: cursive; font-size: 48px; text-align: center; margin-top: 20px;">LOADING...</div>
+<body>
+    <div id='loading-text' style="color: white; font-family: cursive; font-size: 48px; text-align: center; margin-top: 20px;">LOADING...</div>
     <canvas id="unity-canvas" tabindex="-1" hidden></canvas>
+    
     <script src="Build/ultrakill.loader.js"></script>
     <script>
         var canvas = document.querySelector("#unity-canvas");
+        
+        // Handle Responsive Layout
         if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-            // Mobile device style: fill the whole browser client area with the game canvas:
             var meta = document.createElement('meta');
             meta.name = 'viewport';
             meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
@@ -41,7 +44,6 @@
             canvas.style.width = "100%";
             canvas.style.height = "100%";
             canvas.style.position = "fixed";
-            document.body.style.textAlign = "left";
         } else {
             function resizeCanvas() {
                 canvas.width = window.innerWidth;
@@ -53,10 +55,10 @@
             window.addEventListener('resize', resizeCanvas);
         }
 
+        // Merge split files
         function mergeFiles(fileParts) {
             return new Promise((resolve, reject) => {
                 let buffers = [];
-
                 function fetchPart(index) {
                     if (index >= fileParts.length) {
                         let mergedBlob = new Blob(buffers);
@@ -80,12 +82,15 @@
             }
             return parts;
         }
+
+        // Start Loading and Initialize Save Sync
         Promise.all([
             mergeFiles(getParts("Build/ultrakill.data.unityweb", 1, 4)),
             mergeFiles(getParts("Build/ultrakill.wasm.unityweb", 1, 2))
         ]).then(([dataUrl, wasmurl]) => {
             document.querySelector("#unity-canvas").hidden = false;
-            createUnityInstance(document.querySelector("#unity-canvas"), {
+            
+            createUnityInstance(canvas, {
                 dataUrl: dataUrl,
                 frameworkUrl: "Build/ultrakill.framework.js.unityweb",
                 codeUrl: wasmurl,
@@ -93,13 +98,33 @@
                 companyName: "Hakita and Cake Logic",
                 productName: "ULTRAKILL",
                 productVersion: "1.4",
-                // matchWebGLToCanvasSize: false, // Uncomment this to separately control WebGL canvas render size and DOM element size.
-                // devicePixelRatio: 1, // Uncomment this to override low DPI rendering on high DPI displays.
-            }).then((e) => {
+            }).then((unityInstance) => {
                 document.querySelector("#loading-text").remove();
+
+                // --- PERSISTENT SAVING LOGIC ---
+                // This forces Unity to sync the internal file system with IndexedDB
+                if (window.indexedDB) {
+                    // Sync FROM IndexedDB to Unity RAM on startup
+                    unityInstance.Module.FS.syncfs(true, function (err) {
+                        console.log("Saves synced from browser storage.");
+                    });
+
+                    // Sync FROM Unity RAM to IndexedDB when user leaves or closes tab
+                    window.addEventListener("beforeunload", function (event) {
+                        unityInstance.Module.FS.syncfs(false, function (err) {
+                            console.log("Saves pushed to browser storage.");
+                        });
+                    });
+
+                    // Periodic auto-save sync every 30 seconds
+                    setInterval(function() {
+                        unityInstance.Module.FS.syncfs(false, function (err) {
+                            if (!err) console.log("Auto-synced saves.");
+                        });
+                    }, 30000);
+                }
             });
         });
     </script>
 </body>
-
 </html>
